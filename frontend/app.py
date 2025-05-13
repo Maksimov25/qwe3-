@@ -21,7 +21,7 @@ st.markdown("""
 """)
 
 # Загрузка файла
-uploaded_file = st.file_uploader("Выберите Excel-файл", type=['xlsx', 'xls'])
+uploaded_file = st.file_uploader("Выберите Excel-файл", type=['xlsx', 'xls', 'csv'])
 
 if uploaded_file is not None:
     try:

@@ -4,6 +4,7 @@ import pandas as pd
 import io
 from typing import Dict, Any
 import math
+import numpy as np  # Добавьте в начало файла
 
 app = FastAPI(title="API преобразования координат")
 
@@ -31,6 +32,8 @@ def transform_coordinates(x: float, y: float, z: float) -> Dict[str, float]:
         "transformed_z": round(transformed_z, 3)
     }
 
+
+
 @app.post("/transform")
 async def transform_file(file: UploadFile = File(...)) -> Dict[str, Any]:
     """
@@ -46,14 +49,21 @@ async def transform_file(file: UploadFile = File(...)) -> Dict[str, Any]:
         if not all(col in df.columns for col in required_columns):
             raise HTTPException(status_code=400, detail="Excel-файл должен содержать столбцы x, y, z")
         
+        # Явное преобразование типов (чтобы избежать numpy.int64)
+        df[['x', 'y', 'z']] = df[['x', 'y', 'z']].astype(float)
+
         # Преобразование координат
         transformed_data = []
         for _, row in df.iterrows():
-            transformed = transform_coordinates(row['x'], row['y'], row['z'])
+            x = float(row['x'])
+            y = float(row['y'])
+            z = float(row['z'])
+
+            transformed = transform_coordinates(x, y, z)
             transformed_data.append({
-                'original_x': row['x'],
-                'original_y': row['y'],
-                'original_z': row['z'],
+                'original_x': x,
+                'original_y': y,
+                'original_z': z,
                 **transformed
             })
         
