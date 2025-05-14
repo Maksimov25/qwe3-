@@ -1,14 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
-import io
-from typing import Dict, Any
 import math
-import numpy as np  # Добавьте в начало файла
+import numpy as np
+import json
+from datetime import datetime
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="API преобразования координат")
+app = FastAPI()
 
-# Включение CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,83 +17,74 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def transform_coordinates(x: float, y: float, z: float) -> Dict[str, float]:
-    """
-    Преобразование координат согласно алгоритму из практической работы №7
-    """
-    # Пример преобразования (замените на вашу логику преобразования)
-    transformed_x = x * math.cos(math.radians(45)) - y * math.sin(math.radians(45))
-    transformed_y = x * math.sin(math.radians(45)) + y * math.cos(math.radians(45))
-    transformed_z = z + 100  # Пример смещения
-    
-    return {
-        "transformed_x": round(transformed_x, 3),
-        "transformed_y": round(transformed_y, 3),
-        "transformed_z": round(transformed_z, 3)
-    }
+def load_parameters(path="parameters.json"):
+    """Загружает параметры из JSON"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise ValueError(f"Ошибка чтения параметров: {str(e)}")
 
+def apply_transformation(x, y, z, params):
+    """Применяет преобразование по формулам из практической работы"""
+    dx, dy, dz = params["ΔX"], params["ΔY"], params["ΔZ"]
+    wx, wy, wz = params["ωx"], params["ωy"], params["ωz"]
+    m = params["m"]
 
+    # Преобразование координат
+    new_x = (1 + m) * (x - wz * y + wy * z) + dx
+    new_y = (1 + m) * (wz * x + y - wx * z) + dy
+    new_z = (1 + m) * (-wy * x + wx * y + z) + dz
+
+    return round(new_x, 3), round(new_y, 3), round(new_z, 3)
 
 @app.post("/transform")
-async def transform_file(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """
-    Преобразование координат из загруженного Excel-файла
-    """
+async def transform_file(file: UploadFile = File(...)):
     try:
-        # Чтение Excel-файла
-        contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
-        
-        # Проверка необходимых столбцов
-        required_columns = ['x', 'y', 'z']
-        if not all(col in df.columns for col in required_columns):
-            raise HTTPException(status_code=400, detail="Excel-файл должен содержать столбцы x, y, z")
-        
-        # Явное преобразование типов (чтобы избежать numpy.int64)
-        df[['x', 'y', 'z']] = df[['x', 'y', 'z']].astype(float)
+        # Чтение файла
+        df = pd.read_excel(await file.read())
 
-        # Преобразование координат
+        # Проверка столбцов
+        if not all(col in df.columns for col in ['x', 'y', 'z']):
+            raise HTTPException(status_code=400, detail="Файл должен содержать колонки x, y, z")
+
+        # Загрузка параметров
+        params = load_parameters()
+        initial_system = "СК-42"
+        target_system = "ПЗ-90.11"
+
+        from_params = params[initial_system]
+        to_params = params[target_system]
+
+        # Преобразование
         transformed_data = []
         for _, row in df.iterrows():
-            x = float(row['x'])
-            y = float(row['y'])
-            z = float(row['z'])
-
-            transformed = transform_coordinates(x, y, z)
+            x, y, z = float(row['x']), float(row['y']), float(row['z'])
+            tx, ty, tz = apply_transformation(x, y, z, from_params)
+            tx, ty, tz = apply_transformation(tx, ty, tz, to_params)
             transformed_data.append({
-                'original_x': x,
-                'original_y': y,
-                'original_z': z,
-                **transformed
+                "original_x": x,
+                "original_y": y,
+                "original_z": z,
+                "new_x": tx,
+                "new_y": ty,
+                "new_z": tz
             })
-        
-        # Генерация отчета в формате markdown
-        markdown_report = generate_markdown_report(transformed_data)
-        
+
+        # Генерация отчета
+        report = f"# Отчет о преобразовании\n"
+        report += f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+        report += "| X | Y | Z | Новый X | Новый Y | Новый Z |\n"
+        report += "|---|---|---|---------|---------|---------|\n"
+
+        for item in transformed_data[:5]:  # Только первые 5 записей для отчета
+            report += f"|{item['original_x']}|{item['original_y']}|{item['original_z']}|{item['new_x']}|{item['new_y']}|{item['new_z']}|\n"
+
         return {
             "status": "success",
-            "transformed_data": transformed_data,
-            "markdown_report": markdown_report
+            "data": transformed_data,
+            "report": report
         }
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-def generate_markdown_report(data: list) -> str:
-    """
-    Генерация отчета в формате markdown из преобразованных данных
-    """
-    report = "# Отчет о преобразовании координат\n\n"
-    report += "## Результаты преобразования\n\n"
-    report += "| Исходный X | Исходный Y | Исходный Z | Преобразованный X | Преобразованный Y | Преобразованный Z |\n"
-    report += "|------------|------------|------------|-------------------|-------------------|-------------------|\n"
-    
-    for row in data:
-        report += f"| {row['original_x']:.3f} | {row['original_y']:.3f} | {row['original_z']:.3f} | "
-        report += f"{row['transformed_x']:.3f} | {row['transformed_y']:.3f} | {row['transformed_z']:.3f} |\n"
-    
-    return report
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+        return {"status": "error", "message": str(e)}
